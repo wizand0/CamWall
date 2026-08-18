@@ -10,14 +10,17 @@ REM Add all changes
 git add .
 
 REM Commit changes
-git commit -m "feat: Complete initial architecture setup and RTSP frame capture implementation
+git commit -m "feat: Complete initial architecture setup and RTSP frame capture testing infrastructure
 
 - Set up project architecture with MVVM pattern
 - Implemented Camera model and repository
 - Created RTSP frame capture functionality using Media3 and TextureView
 - Added basic UI components with Jetpack Compose
 - Prepared foundation for camera wall feature
-- Created development log"
+- Created development log
+- Added RTSP testing infrastructure with TestRtspScreen
+- Integrated test RTSP streams for validation
+- Updated MainActivity for RTSP testing"
 
 REM Push to GitHub
 git push origin main
