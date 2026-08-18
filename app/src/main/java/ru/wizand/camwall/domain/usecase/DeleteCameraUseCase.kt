@@ -1,12 +1,11 @@
 package ru.wizand.camwall.domain.usecase
 
 import ru.wizand.camwall.domain.repository.ICameraRepository
-import javax.inject.Inject
 
-class DeleteCameraUseCase @Inject constructor(
+class DeleteCameraUseCase(
     private val repository: ICameraRepository
 ) {
-    suspend operator fun invoke(id: String) {
-        repository.deleteCamera(id)
+    suspend operator fun invoke(id: Int): Result<Unit> {
+        return repository.deleteCamera(id)
     }
 }

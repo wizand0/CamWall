@@ -1,17 +1,11 @@
 package ru.wizand.camwall.domain.repository
 
-import kotlinx.coroutines.flow.Flow
 import ru.wizand.camwall.domain.model.Camera
 
 interface ICameraRepository {
-    fun getAllCameras(): Flow<List<Camera>>
-    suspend fun getCameraById(id: String): Camera?
-    suspend fun insertCamera(camera: Camera)
-    suspend fun updateCamera(camera: Camera)
-    suspend fun deleteCamera(id: String)
-    suspend fun updateCameraFrame(
-        cameraId: String,
-        frameTimestamp: Long,
-        error: String? = null
-    )
+    suspend fun getCameras(): Result<List<Camera>>
+    suspend fun getCameraById(id: Int): Result<Camera?>
+    suspend fun addCamera(camera: Camera): Result<Unit>
+    suspend fun updateCamera(camera: Camera): Result<Unit>
+    suspend fun deleteCamera(id: Int): Result<Unit>
 }

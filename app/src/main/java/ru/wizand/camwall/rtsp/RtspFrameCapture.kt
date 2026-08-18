@@ -2,43 +2,52 @@ package ru.wizand.camwall.rtsp
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.net.Uri
+import android.opengl.GLES20
+import android.os.Handler
+import android.os.Looper
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.TextureView
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
+import kotlinx.coroutines.withContext
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.video.VideoSink
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import kotlinx.coroutines.*
 import ru.wizand.camwall.domain.model.Frame
-import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import javax.microedition.khronos.egl.EGL10
+import javax.microedition.khronos.egl.EGLContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 @UnstableApi
-class RtspFrameCapture(private val context: Context) {
+class RtspFrameCapture(private val context: Context) { // Renamed from RtspFrameCaptureNew
 
-    suspend fun captureFrame(rtspUrl: String, timeoutMs: Long = 10000): Result<Frame> = withTimeout(timeoutMs) {
+    suspend fun captureFrame(rtspUrl: String, timeoutMs: Long = 15000): Result<Frame> = withTimeout(timeoutMs) {
         try {
             // Создаем ExoPlayer для захвата кадра
-            val trackSelector = DefaultTrackSelector(context)
-            val player = ExoPlayer.Builder(context)
-                .setTrackSelector(trackSelector)
-                .build()
-
+            val player = ExoPlayer.Builder(context).build()
+            
             val mediaItem = MediaItem.fromUri(rtspUrl)
             player.setMediaItem(mediaItem)
+            
+            // Создаем TextureView для рендеринга видео
+            val textureView = android.view.TextureView(context)
+            player.setVideoTextureView(textureView)
             
             // Подготовка плеера
             player.prepare()
             player.play()
-
+            
             // Ждем получения первого кадра
-            val bitmap = waitForFirstFrame(player, timeoutMs)
+            val bitmap = withContext(Dispatchers.Main) {
+                waitForFrameFromTextureView(textureView, timeoutMs)
+            }
             
             if (bitmap != null) {
                 // Сохраняем кадр во временный файл
@@ -64,45 +73,80 @@ class RtspFrameCapture(private val context: Context) {
                 Result.failure(Exception("Failed to capture frame from RTSP stream"))
             }
         } catch (e: Exception) {
-            Timber.e(e, "Error capturing frame from RTSP: $rtspUrl")
-            Result.failure(e)
+            if (e is TimeoutCancellationException) {
+                Result.failure(Exception("Timeout while capturing frame from RTSP stream"))
+            } else {
+                Result.failure(e)
+            }
         }
     }
 
-    private suspend fun waitForFirstFrame(player: ExoPlayer, timeoutMs: Long): Bitmap? {
+    private suspend fun waitForFrameFromTextureView(textureView: TextureView, timeoutMs: Long): Bitmap? {
         return suspendCoroutine { continuation ->
+            var captured = false
             var timeoutJob: Job? = null
             
-            // Устанавливаем слушатель для получения кадра
-            val listener = object : ExoPlayer.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if (isPlaying) {
-                        // Пытаемся получить кадр с задержкой для стабилизации
-                        CoroutineScope(Dispatchers.Main).launch {
-                            delay(1000) // Ждем немного для стабилизации потока
-                            
-                            // В Android Media3 нет прямого способа получить кадр как Bitmap
-                            // Поэтому используем альтернативный подход
-                            // Для настоящего получения кадра может потребоваться Surface
-                            
-                            // Здесь мы просто возвращаем null, так как Media3 не предоставляет
-                            // простого способа получить кадр как Bitmap
-                            // Реализация будет зависеть от конкретного подхода
+            // Проверяем, готова ли текстура для захвата
+            if (textureView.isAvailable) {
+                // Захватываем кадр
+                val bitmap = textureView.bitmap
+                if (bitmap != null) {
+                    captured = true
+                    continuation.resume(bitmap)
+                }
+            }
+            
+            // Устанавливаем слушатель доступности поверхности
+            textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(surfaceTexture: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                    // Поверхность доступна, но кадр может еще не поступить
+                    // Установим небольшую задержку, чтобы дождаться первого кадра
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!captured) {
+                            val bitmap = textureView.bitmap
+                            if (bitmap != null && !captured) {
+                                captured = true
+                                timeoutJob?.cancel()
+                                continuation.resume(bitmap)
+                            }
+                        }
+                    }, 1000) // Ждем 1 секунду для получения первого кадра
+                }
+
+                override fun onSurfaceTextureSizeChanged(surfaceTexture: android.graphics.SurfaceTexture, width: Int, height: Int) {}
+
+                override fun onSurfaceTextureDestroyed(surfaceTexture: android.graphics.SurfaceTexture): Boolean {
+                    if (!captured) {
+                        timeoutJob?.cancel()
+                        continuation.resume(null)
+                    }
+                    return true
+                }
+
+                override fun onSurfaceTextureUpdated(surfaceTexture: android.graphics.SurfaceTexture) {
+                    // Этот метод вызывается при обновлении текстуры (новый кадр)
+                    if (!captured) {
+                        // Защита от частых вызовов - захватываем только первый кадр
+                        val bitmap = textureView.bitmap
+                        if (bitmap != null) {
+                            captured = true
                             timeoutJob?.cancel()
-                            continuation.resume(null)
+                            continuation.resume(bitmap)
                         }
                     }
                 }
             }
             
-            player.addListener(listener)
-            
             // Устанавливаем таймаут
             timeoutJob = CoroutineScope(Dispatchers.Main).launch {
                 delay(timeoutMs)
-                if (continuation.isActive) {
-                    player.removeListener(listener)
-                    continuation.resume(null)
+                if (!captured) {
+                    captured = true
+                    try {
+                        continuation.resume(null)
+                    } catch (e: IllegalStateException) {
+                        // Continuation might have already been resumed
+                    }
                 }
             }
         }

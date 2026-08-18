@@ -1,31 +1,30 @@
 package ru.wizand.camwall
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
-import dagger.hilt.android.AndroidEntryPoint
-import ru.wizand.camwall.rtsp.TestRtspScreen
-import ru.wizand.camwall.ui.theme.CamWallTheme
+import androidx.appcompat.app.AppCompatActivity
+import android.widget.TextView
+import android.widget.LinearLayout
+import android.util.Log
+import ru.wizand.camwall.viewmodels.CameraWallViewModel
 
-@AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        setContent {
-            CamWallTheme {
-                // A surface container using the 'background' color from the theme
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    TestRtspScreen()
-                }
-            }
+        // Simple layout
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
+        
+        val textView = TextView(this).apply {
+            text = "CamWall - RTSP Camera Monitor"
+        }
+        
+        layout.addView(textView)
+        setContentView(layout)
+        
+        // Initialize ViewModel without compose
+        val app = application as CamWallApplication
+        val viewModel = CameraWallViewModel(app.getCamerasUseCase)
     }
 }
