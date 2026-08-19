@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
+//    alias(libs.plugins.jetbrains.kotlin.android)
     alias(libs.plugins.ksp)
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -32,7 +34,11 @@ android {
     }
     
     buildFeatures {
-        compose = false
+        compose = true
+    }
+    
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.15" // Match the version in libs.versions.toml
     }
     
     kotlin {
@@ -46,11 +52,21 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     
-    implementation(libs.androidx.constraintlayout)
+    // Compose
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
     
-    // Navigation - using View system version
-    implementation(libs.androidx.navigation.fragment.ktx)
-    implementation(libs.androidx.navigation.ui.ktx)
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+    
+    // ConstraintLayout for Compose
+    implementation(libs.androidx.constraintlayout)
     
     // Room
     implementation(libs.androidx.room.runtime)
@@ -74,11 +90,20 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
     
+    // Image loading
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    
     // JSON
     implementation(libs.gson)
+    
+
     
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    
+    // Preview tools
+//    debugImplementation("libs.androidx.compose.ui.tooling:1.12.0")
+    implementation("androidx.compose.ui:ui-tooling:1.12.0")
 }

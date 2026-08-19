@@ -1,30 +1,28 @@
 package ru.wizand.camwall
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
-import android.widget.TextView
-import android.widget.LinearLayout
-import android.util.Log
-import ru.wizand.camwall.viewmodels.CameraWallViewModel
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.ui.Modifier
+import ru.wizand.camwall.ui.theme.CamWallTheme
+import ru.wizand.camwall.viewmodel_factory.CameraWallViewModelFactory
+import ru.wizand.camwall.presentation.navigation.AppNavigation
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Simple layout
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        setContent {
+            CamWallTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    AppNavigation(viewModelFactory = CameraWallViewModelFactory(application))
+                }
+            }
         }
-        
-        val textView = TextView(this).apply {
-            text = "CamWall - RTSP Camera Monitor"
-        }
-        
-        layout.addView(textView)
-        setContentView(layout)
-        
-        // Initialize ViewModel without compose
-        val app = application as CamWallApplication
-        val viewModel = CameraWallViewModel(app.getCamerasUseCase)
     }
 }

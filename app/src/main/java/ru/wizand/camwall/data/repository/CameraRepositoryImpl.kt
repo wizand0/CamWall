@@ -1,5 +1,6 @@
 package ru.wizand.camwall.data.repository
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import ru.wizand.camwall.data.local.database.CameraDao
 import ru.wizand.camwall.domain.model.Camera
@@ -11,19 +12,15 @@ class CameraRepositoryImpl(
 
     override suspend fun getCameras(): Result<List<Camera>> {
         return try {
-            val cameras = cameraDao.getAllCameras().first() ?: emptyList()
+            val cameras = cameraDao.getAllCameras().first()
             Result.success(cameras)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    override suspend fun getCameraById(id: Int): Result<Camera?> {
-        return try {
-            Result.success(cameraDao.getCameraById(id.toString()))
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    override fun getCameraById(id: String): Flow<Camera?> {
+        return cameraDao.getCameraById(id)
     }
 
     override suspend fun addCamera(camera: Camera): Result<Unit> {
@@ -44,9 +41,9 @@ class CameraRepositoryImpl(
         }
     }
 
-    override suspend fun deleteCamera(id: Int): Result<Unit> {
+    override suspend fun deleteCamera(id: String): Result<Unit> {
         return try {
-            cameraDao.deleteCameraById(id.toString())
+            cameraDao.deleteCameraById(id)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

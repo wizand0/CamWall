@@ -10,7 +10,10 @@ interface CameraDao {
     fun getAllCameras(): Flow<List<Camera>>
 
     @Query("SELECT * FROM cameras WHERE id = :id")
-    suspend fun getCameraById(id: String): Camera?
+    fun getCameraById(id: String): Flow<Camera?>
+
+    @Query("SELECT * FROM cameras WHERE id = :id")
+    suspend fun getCameraByIdSync(id: String): Camera?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCamera(camera: Camera)

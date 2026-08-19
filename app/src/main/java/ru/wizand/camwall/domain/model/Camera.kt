@@ -17,7 +17,26 @@ data class Camera(
     val lastError: String? = null,
     val consecutiveErrors: Int = 0,
     val sortOrder: Int = 0
-)
+) {
+    /**
+     * Путь к последнему сохранённому кадру камеры.
+     * Кадр хранится в files/cameras/{cameraId}/latest.jpg (ТЗ §8).
+     * Room это свойство игнорирует (нет backing field в конструкторе).
+     */
+    val frameFilePath: String
+        get() = "cameras/$id/latest.jpg"
+
+    /**
+     * Вычисляемый статус камеры на основе сохранённых данных.
+     * Runtime-статус не хранится в Room (ТЗ §17).
+     */
+    val status: CameraStatus
+        get() = when {
+            lastError != null -> CameraStatus.ERROR
+            lastSuccessfulFrameAt == null -> CameraStatus.NO_DATA
+            else -> CameraStatus.ONLINE
+        }
+}
 
 enum class CameraStatus {
     UNKNOWN,

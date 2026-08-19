@@ -28,7 +28,7 @@ import kotlin.coroutines.suspendCoroutine
 @UnstableApi
 class RtspFrameCapture(private val context: Context) { // Renamed from RtspFrameCaptureNew
 
-    suspend fun captureFrame(rtspUrl: String, timeoutMs: Long = 15000): Result<Frame> = withTimeout(timeoutMs) {
+    suspend fun captureFrame(cameraId: String, rtspUrl: String, timeoutMs: Long = 15000): Result<Frame> = withTimeout(timeoutMs) {
         try {
             // Создаем ExoPlayer для захвата кадра
             val player = ExoPlayer.Builder(context).build()
@@ -50,8 +50,8 @@ class RtspFrameCapture(private val context: Context) { // Renamed from RtspFrame
             }
             
             if (bitmap != null) {
-                // Сохраняем кадр во временный файл
-                val frameFile = saveBitmapToFile(bitmap)
+                // Сохраняем кадр в постоянный файл камеры (files/cameras/{cameraId}/latest.jpg)
+                val frameFile = saveBitmapToFile(bitmap, cameraId)
                 
                 // Останавливаем и освобождаем ресурсы
                 player.stop()
@@ -152,16 +152,20 @@ class RtspFrameCapture(private val context: Context) { // Renamed from RtspFrame
         }
     }
 
-    private fun saveBitmapToFile(bitmap: Bitmap): File {
+    private fun saveBitmapToFile(bitmap: Bitmap, cameraId: String): File {
         val outputStream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
-        
-        val file = File(context.cacheDir, "temp_frame_${System.currentTimeMillis()}.jpg")
+
+        val cameraDir = File(context.filesDir, "cameras/$cameraId")
+        if (!cameraDir.exists()) {
+            cameraDir.mkdirs()
+        }
+        val file = File(cameraDir, "latest.jpg")
         val fileOutputStream = FileOutputStream(file)
         fileOutputStream.write(outputStream.toByteArray())
         fileOutputStream.flush()
         fileOutputStream.close()
-        
+
         return file
     }
 }
