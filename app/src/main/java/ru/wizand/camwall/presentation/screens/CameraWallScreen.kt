@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,6 +151,11 @@ fun CameraWallScreen(
                     )
                 }
             } else {
+                // Этап B: сначала включённые камеры, затем разделитель и
+                // отключённые (в конец списка, приглушённые карточки).
+                val enabledCameras = cameras.filter { it.enabled }
+                val disabledCameras = cameras.filterNot { it.enabled }
+
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     modifier = Modifier.fillMaxSize(),
@@ -157,13 +163,33 @@ fun CameraWallScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(cameras) { camera ->
+                    items(enabledCameras) { camera ->
                         CameraCard(
                             camera = camera,
+                            dimmed = false,
                             onCameraClick = { clickedCamera ->
                                 navController.navigate("camera_detail/${clickedCamera.id}")
                             }
                         )
+                    }
+                    if (disabledCameras.isNotEmpty()) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) {
+                            Text(
+                                text = "Disabled",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                            )
+                        }
+                        items(disabledCameras) { camera ->
+                            CameraCard(
+                                camera = camera,
+                                dimmed = true,
+                                onCameraClick = { clickedCamera ->
+                                    navController.navigate("camera_detail/${clickedCamera.id}")
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -174,6 +200,7 @@ fun CameraWallScreen(
 @Composable
 fun CameraCard(
     camera: Camera,
+    dimmed: Boolean = false,
     onCameraClick: (Camera) -> Unit
 ) {
     val context = LocalContext.current
@@ -184,6 +211,7 @@ fun CameraCard(
         modifier = Modifier
             .fillMaxWidth()
             .height(200.dp)
+            .then(if (dimmed) Modifier.alpha(0.55f) else Modifier)
     ) {
         Column(
             modifier = Modifier

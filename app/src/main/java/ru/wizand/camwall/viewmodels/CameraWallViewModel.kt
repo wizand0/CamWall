@@ -114,6 +114,22 @@ class CameraWallViewModel(
         }
     }
 
+    /**
+     * Включение/выключение автообновления камеры (этап B).
+     * Выключенная камера не участвует в обходах (foreground, быстрый старт,
+     * WorkManager), но её кадр можно обновить вручную из детального экрана.
+     */
+    fun setCameraEnabled(camera: Camera, enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                updateCameraUseCase(camera.copy(enabled = enabled))
+                loadCameras()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error toggling camera enabled state", e)
+            }
+        }
+    }
+
     fun testRtspConnection(rtspUrl: String, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
@@ -147,7 +163,9 @@ class CameraWallViewModel(
                 _isLoading.value = true
                 try {
                     val cameras = getCamerasUseCase().getOrDefault(emptyList())
-                    refreshSweep(cameras)
+                    // Отключённые камеры в автообход не попадают (этап B):
+                    // их кадр обновляется только вручную из детального экрана.
+                    refreshSweep(cameras.filter { it.enabled })
                     loadCameras() // Refresh the list
                 } catch (e: Exception) {
                     Log.e(TAG, "Error refreshing all cameras", e)
@@ -174,7 +192,7 @@ class CameraWallViewModel(
             }
             try {
                 val cameras = getCamerasUseCase().getOrDefault(emptyList())
-                val withoutFrames = cameras.filter { it.lastSuccessfulFrameAt == null }
+                val withoutFrames = cameras.filter { it.enabled && it.lastSuccessfulFrameAt == null }
                 if (withoutFrames.isEmpty()) return@launch
                 Log.d(TAG, "refreshCamerasWithoutFrames: updating ${withoutFrames.size} camera(s)")
                 refreshSweep(withoutFrames)
