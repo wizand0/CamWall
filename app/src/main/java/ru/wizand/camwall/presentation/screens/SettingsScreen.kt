@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -118,6 +120,26 @@ fun SettingsScreen(
             Text(
                 text = "$maxRetries retries",
                 modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // Диагностика (ТЗ §44): ручной запуск фоновой WorkManager-задачи,
+            // чтобы подтвердить, что обновление кадров работает вне foreground-цикла.
+            Text(
+                text = "Diagnostics",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+            )
+            OutlinedButton(
+                onClick = { viewModel.triggerOneTimeUpdate() }
+            ) {
+                Text("Trigger background update")
+            }
+            Text(
+                text = "Enqueues a one-time WorkManager job that refreshes all " +
+                        "camera frames exactly like the periodic background task. " +
+                        "Check logcat (tags: CameraUpdateWorker, RtspFrameCapture).",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
     }
