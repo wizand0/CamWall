@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ru.wizand.camwall.domain.model.Camera
 import ru.wizand.camwall.domain.repository.ICameraRepository
 import ru.wizand.camwall.domain.usecase.AddCameraUseCase
@@ -130,18 +132,58 @@ class CameraWallViewModel(
 
     fun refreshAllCameras() {
         viewModelScope.launch {
-            _isLoading.value = true
+            // Защита от пересекающихся обходов (v4 §1.3): если предыдущий
+            // обход ещё идёт, новый не стартует, а просто пропускается.
+            if (!refreshMutex.tryLock()) {
+                Log.d(TAG, "refreshAllCameras skipped: previous sweep still running")
+                return@launch
+            }
+            try {
+                _isLoading.value = true
+                try {
+                    val cameras = getCamerasUseCase().getOrDefault(emptyList())
+                    cameras.forEach { camera ->
+                        val updatedCamera = refreshCameraInternal(camera)
+                        updateCameraUseCase(updatedCamera)
+                    }
+                    loadCameras() // Refresh the list
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error refreshing all cameras", e)
+                } finally {
+                    _isLoading.value = false
+                }
+            } finally {
+                refreshMutex.unlock()
+            }
+        }
+    }
+
+    /**
+     * Быстрый старт (v4 §1.2): однократно обновляет только камеры без кадра
+     * (lastSuccessfulFrameAt == null), чтобы после добавления камеры или
+     * переустановки приложения пользователь не ждал первого тика интервала.
+     * Вызывается при открытии экрана стены.
+     */
+    fun refreshCamerasWithoutFrames() {
+        viewModelScope.launch {
+            if (!refreshMutex.tryLock()) {
+                Log.d(TAG, "refreshCamerasWithoutFrames skipped: sweep already running")
+                return@launch
+            }
             try {
                 val cameras = getCamerasUseCase().getOrDefault(emptyList())
-                cameras.forEach { camera ->
+                val withoutFrames = cameras.filter { it.lastSuccessfulFrameAt == null }
+                if (withoutFrames.isEmpty()) return@launch
+                Log.d(TAG, "refreshCamerasWithoutFrames: updating ${withoutFrames.size} camera(s)")
+                withoutFrames.forEach { camera ->
                     val updatedCamera = refreshCameraInternal(camera)
                     updateCameraUseCase(updatedCamera)
                 }
-                loadCameras() // Refresh the list
+                loadCameras()
             } catch (e: Exception) {
-                Log.e(TAG, "Error refreshing all cameras", e)
+                Log.e(TAG, "Error in refreshCamerasWithoutFrames", e)
             } finally {
-                _isLoading.value = false
+                refreshMutex.unlock()
             }
         }
     }
@@ -258,6 +300,10 @@ class CameraWallViewModel(
     // корутин-циклом, а не WorkManager.
 
     private var foregroundRefreshJob: Job? = null
+
+    // Защита от пересекающихся обходов: общий Mutex для ручного обновления,
+    // быстрого старта и foreground-цикла.
+    private val refreshMutex = Mutex()
 
     fun startForegroundAutoRefresh(intervalSeconds: Int) {
         foregroundRefreshJob?.cancel()

@@ -84,6 +84,10 @@ fun CameraWallScreen(
 
         viewModel.loadCameras()
 
+        // Быстрый старт (v4 §1.2): камеры без кадра обновляем сразу,
+        // не дожидаясь первого тика foreground-цикла.
+        viewModel.refreshCamerasWithoutFrames()
+
         val intervalSeconds = viewModel.getRefreshInterval()
         viewModel.startForegroundAutoRefresh(intervalSeconds)
     }
