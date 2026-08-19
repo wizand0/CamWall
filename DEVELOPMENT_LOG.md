@@ -65,9 +65,9 @@
 
 **Выполнено:**
 - Создан тестовый экран для проверки RTSP соединений
-- Подготовлены тестовые ссылки:
-  - Земченков: rtsp://web:TnQ75giwFj7K@85.198.112.54:557/Streaming/Channels/3202
-  - Л4-43: rtsp://46.138.246.136:554/user=admin_password=E16Li3O4_channel=1_stream=0&onvif=0.sdp?real_st
+- Подготовлены тестовые ссылки (пароли замаскированы, ТЗ §43):
+  - Земченков: rtsp://web:****@85.198.112.54:557/Streaming/Channels/3202
+  - Л4-43: rtsp://46.138.246.136:554/user=admin_password=****_channel=1_stream=0&onvif=0.sdp?real_st
 - Обновлен MainActivity для использования тестового экрана
 - Проверена готовность разрешений в AndroidManifest.xml
 

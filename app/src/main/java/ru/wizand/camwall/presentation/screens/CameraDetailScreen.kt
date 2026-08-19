@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import ru.wizand.camwall.util.RtspUrlMasker
 import ru.wizand.camwall.viewmodels.CameraWallViewModel
 import ru.wizand.camwall.viewmodel_factory.CameraWallViewModelFactory
 import java.text.SimpleDateFormat
@@ -117,7 +118,8 @@ fun CameraDetailScreen(
                             .padding(16.dp)
                     ) {
                         Text(text = "Name: ${cam.name}")
-                        Text(text = "URL: ${cam.rtspUrl}")
+                        // Пароль в URL не показываем (ТЗ §43)
+                        Text(text = "URL: ${RtspUrlMasker.mask(cam.rtspUrl)}")
                         Text(text = "Status: ${cam.status}")
                         val frameTime = cam.lastSuccessfulFrameAt?.let {
                             SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(it))

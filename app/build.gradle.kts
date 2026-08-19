@@ -76,15 +76,12 @@ dependencies {
     // DataStore
     implementation(libs.androidx.datastore.preferences)
     
-    // Media3 for RTSP
-//    implementation(libs.androidx.media3.exoplayer)
-//    implementation(libs.androidx.media3.extractor)
+    // Media3: используется только common/UI; RTSP-захват идёт через FFmpegKit
     implementation(libs.androidx.media3.common)
-//    implementation(libs.androidx.media3.datasource)
     implementation(libs.androidx.media3.ui)
-//    implementation(libs.androidx.media3.exoplayer.rtsp)
 
-    // FFmpeg для захвата кадра из RTSP
+    // FFmpegKit: захват кадров из RTSP (media3-exoplayer-rtsp не подходит,
+    // см. комментарий в RtspFrameCapture)
     implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")
 
     // WorkManager
