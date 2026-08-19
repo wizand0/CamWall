@@ -35,6 +35,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -82,6 +83,16 @@ fun CameraWallScreen(
         }
 
         viewModel.loadCameras()
+
+        val intervalSeconds = viewModel.getRefreshInterval()
+        viewModel.startForegroundAutoRefresh(intervalSeconds)
+    }
+
+    // Останавливаем быстрый цикл, когда экран стены уходит с композиции
+    // (например, пользователь перешёл в детали камеры или настройки),
+    // чтобы не дублировать обновления и не тратить батарею впустую.
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopForegroundAutoRefresh() }
     }
 
     Scaffold(

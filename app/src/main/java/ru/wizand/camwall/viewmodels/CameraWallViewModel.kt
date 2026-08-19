@@ -11,9 +11,12 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ru.wizand.camwall.domain.model.Camera
 import ru.wizand.camwall.domain.repository.ICameraRepository
@@ -37,9 +40,6 @@ class CameraWallViewModel(
     private val rtspFrameCapture: RtspFrameCapture
 ) : AndroidViewModel(application) {
 
-    private val _isRefreshing = MutableStateFlow(false)
-    val isRefreshing: StateFlow<Boolean> = _isRefreshing
-
     private val _cameras = MutableStateFlow<List<Camera>>(emptyList())
     val cameras: StateFlow<List<Camera>> = _cameras
 
@@ -58,6 +58,12 @@ class CameraWallViewModel(
 
     init {
         loadCameras()
+        // Фоновое обновление (WorkManager) должно быть запланировано при каждом
+        // старте приложения, а не только при заходе в Settings — иначе после
+        // переустановки/очистки данных расписание пропадает и не восстанавливается.
+        viewModelScope.launch {
+            scheduleBackgroundUpdates(getRefreshInterval())
+        }
     }
 
     fun loadCameras() {
@@ -116,14 +122,9 @@ class CameraWallViewModel(
 
     fun refreshCamera(camera: Camera) {
         viewModelScope.launch {
-            _isRefreshing.value = true
-            try {
-                val updatedCamera = refreshCameraInternal(camera)
-                updateCameraUseCase(updatedCamera)
-                loadCameras()
-            } finally {
-                _isRefreshing.value = false
-            }
+            val updatedCamera = refreshCameraInternal(camera)
+            updateCameraUseCase(updatedCamera)
+            loadCameras() // Refresh the list to show updated camera
         }
     }
 
@@ -249,6 +250,52 @@ class CameraWallViewModel(
     fun scheduleCameraUpdates(intervalMinutes: Long) {
         val updateManager = CameraUpdateManager(application)
         updateManager.scheduleCameraUpdates(intervalMinutes)
+    }
+
+    // --- Быстрое автообновление, пока приложение открыто на экране стены ---
+    // WorkManager не умеет чаще, чем раз в 15 минут (системное ограничение),
+    // поэтому "живой" интервал из настроек (5-300 сек) обслуживается отдельным
+    // корутин-циклом, а не WorkManager.
+
+    private var foregroundRefreshJob: Job? = null
+
+    fun startForegroundAutoRefresh(intervalSeconds: Int) {
+        foregroundRefreshJob?.cancel()
+        foregroundRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                delay(intervalSeconds * 1000L)
+                refreshAllCameras()
+            }
+        }
+    }
+
+    fun stopForegroundAutoRefresh() {
+        foregroundRefreshJob?.cancel()
+        foregroundRefreshJob = null
+    }
+
+    /**
+     * Единая точка изменения интервала обновления из Settings: сохраняет
+     * значение, перезапускает быстрый foreground-цикл (если он сейчас активен,
+     * т.е. пользователь на экране стены) и перепланирует фоновую WorkManager-
+     * задачу с учётом минимума в 15 минут.
+     */
+    fun applyRefreshInterval(intervalSeconds: Int) {
+        setRefreshInterval(intervalSeconds)
+        if (foregroundRefreshJob != null) {
+            startForegroundAutoRefresh(intervalSeconds)
+        }
+        viewModelScope.launch {
+            scheduleBackgroundUpdates(intervalSeconds)
+        }
+    }
+
+    private fun scheduleBackgroundUpdates(intervalSeconds: Int) {
+        // WorkManager.PeriodicWorkRequest не позволяет интервал короче 15 минут —
+        // это ограничение платформы, не библиотеки. Значения из "быстрого" слайдера
+        // (5-300 сек) сюда не подходят напрямую, поэтому клэмпим.
+        val intervalMinutes = (intervalSeconds / 60L).coerceAtLeast(15L)
+        scheduleCameraUpdates(intervalMinutes)
     }
 
     fun cancelCameraUpdates() {

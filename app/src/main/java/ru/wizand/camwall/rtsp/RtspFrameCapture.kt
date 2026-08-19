@@ -48,39 +48,57 @@ class RtspFrameCapture(private val context: Context) {
         val cameraDir = File(context.filesDir, "cameras/$cameraId")
         if (!cameraDir.exists()) cameraDir.mkdirs()
         val target = File(cameraDir, "latest.jpg")
-        val tmp = File(cameraDir, "latest.jpg.tmp")
-        if (tmp.exists()) tmp.delete()
+
+        // Отдельная поддиректория для серии кадров, чтобы не мешать target/tmp других вызовов.
+        val burstDir = File(cameraDir, "burst_tmp")
+        if (burstDir.exists()) burstDir.deleteRecursively()
+        burstDir.mkdirs()
+        val pattern = File(burstDir, "frame_%03d.jpg")
 
         val timeoutMicros = (DEFAULT_TIMEOUT_MS - 2_000L).coerceAtLeast(3_000L) * 1000L
 
         // Аргументы передаём массивом (а не единой командной строкой), чтобы
         // избежать проблем с экранированием спецсимволов в rtspUrl (@, :, /).
+        // -skip_frame nokey (до -i) — декодер пропускает все не-ключевые кадры,
+        // поэтому каждый из WARMUP_FRAMES кадров гарантированно самостоятельный
+        // (не зависит от предыдущих), в отличие от возможного "битого" P-кадра сразу
+        // после подключения. Берём последний из серии — на случай, если первый
+        // keyframe после reconnect у конкретной камеры менее стабилен по экспозиции/фокусу.
         val args = arrayOf(
             "-y",
             "-rtsp_transport", "tcp",
             "-timeout", timeoutMicros.toString(),
             "-skip_frame", "nokey",
             "-i", rtspUrl,
-            "-frames:v", "1",
+            "-frames:v", WARMUP_FRAMES.toString(),
             "-q:v", "2",
             "-vf", "scale='min($MAX_SIDE_PX,iw)':-2",
-            "-f", "mjpeg",
-            tmp.absolutePath
+            "-f", "image2",
+            pattern.absolutePath
         )
 
         val returnCode = runFFmpeg(args)
 
         if (returnCode == null || !ReturnCode.isSuccess(returnCode)) {
-            tmp.delete()
+            burstDir.deleteRecursively()
             return Result.failure(Exception("FFmpeg failed, returnCode=$returnCode"))
         }
 
-        if (!tmp.exists() || tmp.length() == 0L) {
-            tmp.delete()
-            return Result.failure(Exception("FFmpeg reported success but output file is missing/empty"))
+        val lastFrame = burstDir.listFiles { f -> f.extension == "jpg" }
+            ?.filter { it.length() > 0L }
+            ?.maxByOrNull { it.name }
+
+        if (lastFrame == null) {
+            burstDir.deleteRecursively()
+            return Result.failure(Exception("FFmpeg reported success but no output frames found"))
         }
 
-        // Атомарная замена (ТЗ §8)
+        // Атомарная замена (ТЗ §8): копируем выбранный кадр во временный файл
+        // рядом с target, затем rename поверх старого latest.jpg.
+        val tmp = File(cameraDir, "latest.jpg.tmp")
+        lastFrame.copyTo(tmp, overwrite = true)
+        burstDir.deleteRecursively()
+
         if (!tmp.renameTo(target)) {
             tmp.copyTo(target, overwrite = true)
             tmp.delete()
@@ -116,5 +134,8 @@ class RtspFrameCapture(private val context: Context) {
         private const val TAG = "RtspFrameCapture"
         private const val DEFAULT_TIMEOUT_MS = 15_000L
         private const val MAX_SIDE_PX = 640
+        // Сколько ключевых кадров подряд захватить — берём последний (самый "прогретый").
+        // Каждый доп. кадр — это +1-2 сек ожидания (интервал keyframe у типичной IP-камеры).
+        private const val WARMUP_FRAMES = 3
     }
 }

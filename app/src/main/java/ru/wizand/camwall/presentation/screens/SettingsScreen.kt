@@ -71,13 +71,21 @@ fun SettingsScreen(
             Slider(
                 value = refreshInterval.toFloat(),
                 onValueChange = { refreshInterval = it.toInt() },
-                onValueChangeFinished = { viewModel.setRefreshInterval(refreshInterval) },
+                onValueChangeFinished = { viewModel.applyRefreshInterval(refreshInterval) },
                 valueRange = 5f..300f,
                 steps = 58 // Divides range into 5-second increments
             )
 
             Text(
                 text = "$refreshInterval seconds",
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            Text(
+                text = "Applies while the app is open. Background updates " +
+                        "(app closed) run at least every 15 minutes — an Android " +
+                        "system limitation.",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
