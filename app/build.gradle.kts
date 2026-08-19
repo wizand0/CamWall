@@ -89,6 +89,12 @@ dependencies {
 
     // WorkManager
     implementation(libs.androidx.work.runtime)
+
+    // CameraX + ML Kit: сканирование QR-кодов при добавлении камеры (этап A)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
     
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)

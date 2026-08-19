@@ -8,6 +8,7 @@ import androidx.navigation.compose.rememberNavController
 import ru.wizand.camwall.presentation.screens.CameraWallScreen
 import ru.wizand.camwall.presentation.screens.AddCameraScreen
 import ru.wizand.camwall.presentation.screens.CameraDetailScreen
+import ru.wizand.camwall.presentation.screens.ScanQrScreen
 import ru.wizand.camwall.presentation.screens.SettingsScreen
 import ru.wizand.camwall.viewmodel_factory.CameraWallViewModelFactory
 
@@ -24,6 +25,9 @@ fun AppNavigation(viewModelFactory: CameraWallViewModelFactory) {
         }
         composable("add_camera") {
             AddCameraScreen(navController = navController, viewModelFactory = viewModelFactory)
+        }
+        composable("scan_qr") {
+            ScanQrScreen(navController = navController)
         }
         composable("camera_detail/{cameraId}") { backStackEntry ->
             val cameraId = backStackEntry.arguments?.getString("cameraId") ?: ""
