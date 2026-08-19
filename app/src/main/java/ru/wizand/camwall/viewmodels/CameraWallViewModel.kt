@@ -1,17 +1,16 @@
 package ru.wizand.camwall.viewmodels
 
 import android.app.Application
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +18,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import ru.wizand.camwall.domain.model.Camera
 import ru.wizand.camwall.domain.repository.ICameraRepository
@@ -28,9 +28,8 @@ import ru.wizand.camwall.domain.usecase.GetCamerasUseCase
 import ru.wizand.camwall.domain.usecase.UpdateCameraUseCase
 import ru.wizand.camwall.rtsp.RtspFrameCapture
 import ru.wizand.camwall.manager.CameraUpdateManager
-
-// Extension property to access DataStore
-private val Context.dataStore by preferencesDataStore(name = "settings")
+import ru.wizand.camwall.util.SettingsKeys
+import ru.wizand.camwall.util.settingsDataStore
 
 class CameraWallViewModel(
     private val application: Application,
@@ -53,9 +52,11 @@ class CameraWallViewModel(
         private const val DEFAULT_REFRESH_INTERVAL = 30
         private const val DEFAULT_MAX_RETRIES = 3
 
-        private val REFRESH_INTERVAL_KEY = intPreferencesKey("refresh_interval")
-        private val NIGHT_MODE_ENABLED_KEY = booleanPreferencesKey("night_mode_enabled")
-        private val MAX_RETRIES_KEY = intPreferencesKey("max_retries")
+        // Concurrency обхода: не более двух камер одновременно (v4 этап 5).
+        private const val MAX_CONCURRENT_UPDATES = 2
+        // Экспоненциальный backoff для ретраев захвата кадра.
+        private const val RETRY_BASE_BACKOFF_MS = 1_000L
+        private const val RETRY_MAX_BACKOFF_MS = 8_000L
     }
 
     init {
@@ -142,10 +143,7 @@ class CameraWallViewModel(
                 _isLoading.value = true
                 try {
                     val cameras = getCamerasUseCase().getOrDefault(emptyList())
-                    cameras.forEach { camera ->
-                        val updatedCamera = refreshCameraInternal(camera)
-                        updateCameraUseCase(updatedCamera)
-                    }
+                    refreshSweep(cameras)
                     loadCameras() // Refresh the list
                 } catch (e: Exception) {
                     Log.e(TAG, "Error refreshing all cameras", e)
@@ -175,10 +173,7 @@ class CameraWallViewModel(
                 val withoutFrames = cameras.filter { it.lastSuccessfulFrameAt == null }
                 if (withoutFrames.isEmpty()) return@launch
                 Log.d(TAG, "refreshCamerasWithoutFrames: updating ${withoutFrames.size} camera(s)")
-                withoutFrames.forEach { camera ->
-                    val updatedCamera = refreshCameraInternal(camera)
-                    updateCameraUseCase(updatedCamera)
-                }
+                refreshSweep(withoutFrames)
                 loadCameras()
             } catch (e: Exception) {
                 Log.e(TAG, "Error in refreshCamerasWithoutFrames", e)
@@ -189,32 +184,69 @@ class CameraWallViewModel(
     }
 
     /**
-     * Пытается получить новый кадр для камеры.
+     * Обход списка камер с ограничением concurrency=2 (v4 этап 5):
+     * одновременно обновляются не более двух камер, чтобы не держать
+     * много RTSP-сессий и не перегружать сеть.
+     */
+    private suspend fun refreshSweep(cameras: List<Camera>) {
+        if (cameras.isEmpty()) return
+        val semaphore = Semaphore(MAX_CONCURRENT_UPDATES)
+        coroutineScope {
+            cameras.map { camera ->
+                async {
+                    semaphore.acquire()
+                    try {
+                        val updatedCamera = refreshCameraInternal(camera)
+                        updateCameraUseCase(updatedCamera)
+                    } finally {
+                        semaphore.release()
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
+     * Пытается получить новый кадр для камеры с ретраями и экспоненциальным
+     * backoff (v4 этап 5). Число попыток — из настроек (Max Retries, 1..10).
      * При успехе обновляет lastSuccessfulFrameAt и сбрасывает ошибки;
      * при неудаче — lastAttemptAt, lastError и consecutiveErrors (старый кадр не трогается, ТЗ §9).
      */
     private suspend fun refreshCameraInternal(camera: Camera): Camera {
-        return try {
-            val result = rtspFrameCapture.captureFrame(camera.id, camera.rtspUrl)
-            if (result.isSuccess) {
-                camera.copy(
-                    lastSuccessfulFrameAt = System.currentTimeMillis(),
-                    lastAttemptAt = System.currentTimeMillis(),
-                    lastError = null,
-                    consecutiveErrors = 0
-                )
-            } else {
-                camera.copy(
-                    lastAttemptAt = System.currentTimeMillis(),
-                    lastError = result.exceptionOrNull()?.message ?: "Unknown error",
-                    consecutiveErrors = camera.consecutiveErrors + 1
-                )
+        val maxRetries = getMaxRetries().coerceIn(1, 10)
+        var lastFailureMessage: String? = null
+        var backoffMs = RETRY_BASE_BACKOFF_MS
+
+        for (attempt in 1..maxRetries) {
+            if (attempt > 1) {
+                Log.d(TAG, "Retry $attempt/$maxRetries for camera ${camera.name} after ${backoffMs}ms")
+                delay(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(RETRY_MAX_BACKOFF_MS)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error refreshing camera ${camera.name}", e)
+            val result = try {
+                rtspFrameCapture.captureFrame(camera.id, camera.rtspUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error refreshing camera ${camera.name}", e)
+                Result.failure(e)
+            }
+            if (result.isSuccess) {
+                lastFailureMessage = null
+                break
+            }
+            lastFailureMessage = result.exceptionOrNull()?.message ?: "Unknown error"
+        }
+
+        return if (lastFailureMessage == null) {
+            camera.copy(
+                lastSuccessfulFrameAt = System.currentTimeMillis(),
+                lastAttemptAt = System.currentTimeMillis(),
+                lastError = null,
+                consecutiveErrors = 0
+            )
+        } else {
             camera.copy(
                 lastAttemptAt = System.currentTimeMillis(),
-                lastError = e.message,
+                lastError = lastFailureMessage,
                 consecutiveErrors = camera.consecutiveErrors + 1
             )
         }
@@ -235,40 +267,40 @@ class CameraWallViewModel(
 
     // DataStore methods for settings
     suspend fun getRefreshInterval(): Int {
-        val preferences = application.dataStore.data.first()
-        return preferences[REFRESH_INTERVAL_KEY] ?: DEFAULT_REFRESH_INTERVAL
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.REFRESH_INTERVAL_KEY] ?: DEFAULT_REFRESH_INTERVAL
     }
 
     fun setRefreshInterval(interval: Int) {
         viewModelScope.launch {
-            application.dataStore.edit { preferences ->
-                preferences[REFRESH_INTERVAL_KEY] = interval
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.REFRESH_INTERVAL_KEY] = interval
             }
         }
     }
 
     suspend fun isNightModeEnabled(): Boolean {
-        val preferences = application.dataStore.data.first()
-        return preferences[NIGHT_MODE_ENABLED_KEY] ?: false
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.NIGHT_MODE_ENABLED_KEY] ?: false
     }
 
     fun setNightModeEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            application.dataStore.edit { preferences ->
-                preferences[NIGHT_MODE_ENABLED_KEY] = enabled
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.NIGHT_MODE_ENABLED_KEY] = enabled
             }
         }
     }
 
     suspend fun getMaxRetries(): Int {
-        val preferences = application.dataStore.data.first()
-        return preferences[MAX_RETRIES_KEY] ?: DEFAULT_MAX_RETRIES
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.MAX_RETRIES_KEY] ?: DEFAULT_MAX_RETRIES
     }
 
     fun setMaxRetries(retries: Int) {
         viewModelScope.launch {
-            application.dataStore.edit { preferences ->
-                preferences[MAX_RETRIES_KEY] = retries
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.MAX_RETRIES_KEY] = retries
             }
         }
     }
