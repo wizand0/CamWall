@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import ru.wizand.camwall.data.local.database.AppDatabase
 import ru.wizand.camwall.data.repository.CameraRepositoryImpl
 import ru.wizand.camwall.rtsp.RtspFrameCapture
+import ru.wizand.camwall.security.RtspUrlCryptoStore
 
 class CameraUpdateWorker(
     context: Context,
@@ -22,7 +23,8 @@ class CameraUpdateWorker(
             try {
                 // Без DI: зависимости создаются напрямую (Hilt удалён из проекта)
                 val database = AppDatabase.getInstance(applicationContext)
-                val cameraRepository = CameraRepositoryImpl(database.cameraDao())
+                val cryptoStore = RtspUrlCryptoStore(applicationContext)
+                val cameraRepository = CameraRepositoryImpl(database.cameraDao(), cryptoStore)
                 val rtspFrameCapture = RtspFrameCapture(applicationContext)
 
                 // Получаем список всех камер
@@ -43,7 +45,21 @@ class CameraUpdateWorker(
                         continue
                     }
                     try {
-                        val result = rtspFrameCapture.captureFrame(camera.id, camera.rtspUrl)
+                        // RTSP-URL читаем из EncryptedSharedPreferences (этап 2),
+                        // в Room его больше нет.
+                        val rtspUrl = cameraRepository.getRtspUrl(camera.id)
+                        if (rtspUrl.isNullOrBlank()) {
+                            val updatedCamera = camera.copy(
+                                lastAttemptAt = System.currentTimeMillis(),
+                                lastError = "RTSP URL not found in secure storage",
+                                consecutiveErrors = camera.consecutiveErrors + 1
+                            )
+                            cameraRepository.updateCamera(updatedCamera)
+                            errorCount++
+                            Log.w(TAG, "doWork: camera ${camera.id} has no stored URL, skipped")
+                            continue
+                        }
+                        val result = rtspFrameCapture.captureFrame(camera.id, rtspUrl)
                         if (result.isSuccess) {
                             // Обновляем информацию о камере с новым кадром
                             val updatedCamera = camera.copy(

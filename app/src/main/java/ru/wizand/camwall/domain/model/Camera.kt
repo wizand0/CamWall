@@ -9,7 +9,9 @@ data class Camera(
     @PrimaryKey
     val id: String = UUID.randomUUID().toString(),
     val name: String,
-    val rtspUrl: String,
+    // RTSP-URL в Room НЕ хранится (этап 2, безопасность): полный URL с
+    // логином/паролем лежит в EncryptedSharedPreferences (RtspUrlCryptoStore),
+    // ключ записи — id камеры.
     val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val lastSuccessfulFrameAt: Long? = null,

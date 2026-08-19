@@ -118,8 +118,10 @@ fun CameraDetailScreen(
                             .padding(16.dp)
                     ) {
                         Text(text = "Name: ${cam.name}")
-                        // Пароль в URL не показываем (ТЗ §43)
-                        Text(text = "URL: ${RtspUrlMasker.mask(cam.rtspUrl)}")
+                        // Пароль в URL не показываем (ТЗ §43). Сам URL берём из
+                        // EncryptedSharedPreferences, а не из Room (этап 2).
+                        val storedUrl = viewModel.getRtspUrl(cam.id)
+                        Text(text = "URL: ${if (storedUrl != null) RtspUrlMasker.mask(storedUrl) else "—"}")
                         Text(text = "Status: ${cam.status}")
                         val frameTime = cam.lastSuccessfulFrameAt?.let {
                             SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(it))

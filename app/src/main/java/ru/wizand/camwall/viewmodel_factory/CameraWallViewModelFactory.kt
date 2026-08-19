@@ -7,6 +7,7 @@ import ru.wizand.camwall.data.repository.CameraRepositoryImpl
 import ru.wizand.camwall.data.local.database.AppDatabase
 import ru.wizand.camwall.domain.usecase.*
 import ru.wizand.camwall.rtsp.RtspFrameCapture
+import ru.wizand.camwall.security.RtspUrlCryptoStore
 import ru.wizand.camwall.viewmodels.CameraWallViewModel
 
 class CameraWallViewModelFactory(
@@ -17,7 +18,8 @@ class CameraWallViewModelFactory(
         if (modelClass.isAssignableFrom(CameraWallViewModel::class.java)) {
             val database = AppDatabase.getInstance(application)
             val cameraDao = database.cameraDao()
-            val cameraRepository = CameraRepositoryImpl(cameraDao)
+            val cryptoStore = RtspUrlCryptoStore(application)
+            val cameraRepository = CameraRepositoryImpl(cameraDao, cryptoStore)
             
             val getCamerasUseCase = GetCamerasUseCase(cameraRepository)
             val addCameraUseCase = AddCameraUseCase(cameraRepository)

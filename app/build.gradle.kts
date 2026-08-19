@@ -75,6 +75,9 @@ dependencies {
     
     // DataStore
     implementation(libs.androidx.datastore.preferences)
+
+    // Security: EncryptedSharedPreferences для RTSP-URL (этап 2)
+    implementation(libs.androidx.security.crypto)
     
     // Media3: используется только common/UI; RTSP-захват идёт через FFmpegKit
     implementation(libs.androidx.media3.common)

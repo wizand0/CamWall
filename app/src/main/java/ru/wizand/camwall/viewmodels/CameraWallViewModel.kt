@@ -86,7 +86,10 @@ class CameraWallViewModel(
     fun addCamera(name: String, rtspUrl: String) {
         viewModelScope.launch {
             try {
-                val camera = Camera(name = name, rtspUrl = rtspUrl)
+                val camera = Camera(name = name)
+                // URL с логином/паролем в Room не попадает (этап 2) —
+                // сразу в EncryptedSharedPreferences, ключ — id камеры.
+                cameraRepository.saveRtspUrl(camera.id, rtspUrl)
                 addCameraUseCase(camera)
                 loadCameras() // Refresh the list
             } catch (e: Exception) {
@@ -99,6 +102,7 @@ class CameraWallViewModel(
         viewModelScope.launch {
             try {
                 deleteCameraUseCase(camera.id)
+                // URL удаляется репозиторием вместе с записью камеры.
                 // Удаляем файл кадра камеры (ТЗ §8)
                 getApplication<Application>()
                     .filesDir.resolve("cameras/${camera.id}")
@@ -213,6 +217,15 @@ class CameraWallViewModel(
      * при неудаче — lastAttemptAt, lastError и consecutiveErrors (старый кадр не трогается, ТЗ §9).
      */
     private suspend fun refreshCameraInternal(camera: Camera): Camera {
+        val rtspUrl = cameraRepository.getRtspUrl(camera.id)
+        if (rtspUrl.isNullOrBlank()) {
+            return camera.copy(
+                lastAttemptAt = System.currentTimeMillis(),
+                lastError = "RTSP URL not found in secure storage",
+                consecutiveErrors = camera.consecutiveErrors + 1
+            )
+        }
+
         val maxRetries = getMaxRetries().coerceIn(1, 10)
         var lastFailureMessage: String? = null
         var backoffMs = RETRY_BASE_BACKOFF_MS
@@ -224,7 +237,7 @@ class CameraWallViewModel(
                 backoffMs = (backoffMs * 2).coerceAtMost(RETRY_MAX_BACKOFF_MS)
             }
             val result = try {
-                rtspFrameCapture.captureFrame(camera.id, camera.rtspUrl)
+                rtspFrameCapture.captureFrame(camera.id, rtspUrl)
             } catch (e: Exception) {
                 Log.e(TAG, "Error refreshing camera ${camera.name}", e)
                 Result.failure(e)
@@ -307,6 +320,12 @@ class CameraWallViewModel(
 
     // Flow for a specific camera by ID
     fun getCameraById(id: String) = cameraRepository.getCameraById(id)
+
+    /**
+     * Маскированный URL для показа в UI: сам секрет не покидает
+     * EncryptedSharedPreferences (этап 2).
+     */
+    fun getRtspUrl(cameraId: String): String? = cameraRepository.getRtspUrl(cameraId)
 
     fun loadCameraById(id: String) {
         viewModelScope.launch {
