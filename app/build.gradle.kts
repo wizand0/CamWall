@@ -77,12 +77,16 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     
     // Media3 for RTSP
-    implementation(libs.androidx.media3.exoplayer)
-    implementation(libs.androidx.media3.extractor)
+//    implementation(libs.androidx.media3.exoplayer)
+//    implementation(libs.androidx.media3.extractor)
     implementation(libs.androidx.media3.common)
-    implementation(libs.androidx.media3.datasource)
+//    implementation(libs.androidx.media3.datasource)
     implementation(libs.androidx.media3.ui)
-    
+//    implementation(libs.androidx.media3.exoplayer.rtsp)
+
+    // FFmpeg для захвата кадра из RTSP
+    implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")
+
     // WorkManager
     implementation(libs.androidx.work.runtime)
     
@@ -106,4 +110,5 @@ dependencies {
     // Preview tools
 //    debugImplementation("libs.androidx.compose.ui.tooling:1.12.0")
     implementation("androidx.compose.ui:ui-tooling:1.12.0")
+
 }

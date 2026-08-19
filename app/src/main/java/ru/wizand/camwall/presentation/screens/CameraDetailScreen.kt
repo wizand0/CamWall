@@ -64,6 +64,7 @@ fun CameraDetailScreen(
                 },
                 actions = {
                     IconButton(onClick = {
+                        android.util.Log.d("CameraDetailScreen", "Refresh clicked for ${camera?.id}")
                         // Refresh this camera's frame
                         camera?.let { viewModel.refreshCamera(it) }
                     }) {

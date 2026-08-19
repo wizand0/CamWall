@@ -37,6 +37,9 @@ class CameraWallViewModel(
     private val rtspFrameCapture: RtspFrameCapture
 ) : AndroidViewModel(application) {
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing
+
     private val _cameras = MutableStateFlow<List<Camera>>(emptyList())
     val cameras: StateFlow<List<Camera>> = _cameras
 
@@ -113,9 +116,14 @@ class CameraWallViewModel(
 
     fun refreshCamera(camera: Camera) {
         viewModelScope.launch {
-            val updatedCamera = refreshCameraInternal(camera)
-            updateCameraUseCase(updatedCamera)
-            loadCameras() // Refresh the list to show updated camera
+            _isRefreshing.value = true
+            try {
+                val updatedCamera = refreshCameraInternal(camera)
+                updateCameraUseCase(updatedCamera)
+                loadCameras()
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 

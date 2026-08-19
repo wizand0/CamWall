@@ -14,6 +14,7 @@ composeCompiler = "1.5.15"
 composeMaterial3 = "1.4.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
+media3ExoplayerRtsp = "1.11.0"
 navigationCompose = "2.9.8"
 navigationFragmentKtx = "2.9.8"
 navigationUiKtx = "2.9.8"
@@ -44,6 +45,7 @@ androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecyc
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
 # Navigation
+androidx-media3-exoplayer-rtsp = { module = "androidx.media3:media3-exoplayer-rtsp", version.ref = "media3ExoplayerRtsp" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
 # Room
