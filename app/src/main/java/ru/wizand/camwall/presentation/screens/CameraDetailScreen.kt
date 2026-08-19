@@ -1,30 +1,39 @@
 package ru.wizand.camwall.presentation.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -32,12 +41,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import kotlinx.coroutines.delay
+import ru.wizand.camwall.rtsp.RtspLiveViewer
 import ru.wizand.camwall.util.RtspUrlMasker
 import ru.wizand.camwall.viewmodels.CameraWallViewModel
 import ru.wizand.camwall.viewmodel_factory.CameraWallViewModelFactory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private const val LIVE_POLL_INTERVAL_MS = 400L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,9 +64,46 @@ fun CameraDetailScreen(
 ) {
     val camera by viewModel.getCameraById(cameraId).collectAsState(initial = null)
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // Этап C: live view через долгоживущий FFmpeg-сеанс (каждый кадр потока).
+    val liveViewer = remember { RtspLiveViewer(context.applicationContext) }
+    var liveMode by remember { mutableStateOf(false) }
+    // Тик опроса файла live.jpg: смена ключа заставляет Coil перечитать файл.
+    var liveTick by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(cameraId) {
         viewModel.loadCameraById(cameraId)
+    }
+
+    // Гарантированная остановка FFmpeg-сеанса при уходе с экрана,
+    // иначе RTSP-сессия и CPU продолжат работать.
+    DisposableEffect(cameraId) {
+        onDispose { liveViewer.stop() }
+    }
+
+    // Пока live view включён — периодически опрашиваем файл с актуальным кадром.
+    LaunchedEffect(liveMode) {
+        while (liveMode) {
+            delay(LIVE_POLL_INTERVAL_MS)
+            liveTick++
+        }
+    }
+
+    fun startLiveView() {
+        val cam = camera ?: return
+        val url = viewModel.getRtspUrl(cam.id)
+        if (url.isNullOrBlank()) {
+            Toast.makeText(context, "RTSP URL not found in secure storage", Toast.LENGTH_SHORT).show()
+            return
+        }
+        liveViewer.start(url)
+        liveMode = true
+    }
+
+    fun stopLiveView() {
+        liveViewer.stop()
+        liveMode = false
     }
 
     Scaffold(
@@ -64,9 +116,19 @@ fun CameraDetailScreen(
                     }
                 },
                 actions = {
+                    // Этап C: запуск/остановка live view.
+                    // Stop-иконки нет в базовом наборе material-icons-core,
+                    // поэтому для остановки используется Close.
+                    IconButton(onClick = { if (liveMode) stopLiveView() else startLiveView() }) {
+                        Icon(
+                            if (liveMode) Icons.Default.Close else Icons.Default.PlayArrow,
+                            contentDescription = if (liveMode) "Stop live view" else "Start live view"
+                        )
+                    }
+
                     IconButton(onClick = {
                         android.util.Log.d("CameraDetailScreen", "Refresh clicked for ${camera?.id}")
-                        // Refresh this camera's frame
+                        // Ручное обновление кадра (доступно и для отключённых камер, этап B).
                         camera?.let { viewModel.refreshCamera(it) }
                     }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh")
@@ -93,7 +155,6 @@ fun CameraDetailScreen(
                 .padding(paddingValues)
         ) {
             camera?.let { cam ->
-                val context = LocalContext.current
                 val frameFile = context.filesDir.resolve(cam.frameFilePath)
                 val frameModel: Any? = if (frameFile.exists()) frameFile else null
 
@@ -101,15 +162,40 @@ fun CameraDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
-                    // Camera preview
-                    AsyncImage(
-                        model = frameModel,
-                        contentDescription = "Camera preview",
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    )
+                    // Camera preview: в live-режиме показываем live.jpg,
+                    // иначе — последний сохранённый кадр (snapshot).
+                    if (liveMode) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(liveViewer.liveFrameFile)
+                                // Файл перезаписывается на месте: кэш отключаем и
+                                // даём уникальный ключ, чтобы Coil перечитывал файл.
+                                .memoryCachePolicy(CachePolicy.DISABLED)
+                                .diskCachePolicy(CachePolicy.DISABLED)
+                                .memoryCacheKey("live-$cameraId-$liveTick")
+                                .build(),
+                            contentDescription = "Live view",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        )
+                        Text(
+                            text = "LIVE",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                        )
+                    } else {
+                        AsyncImage(
+                            model = frameModel,
+                            contentDescription = "Camera preview",
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        )
+                    }
 
                     // Camera info
                     Column(
@@ -127,6 +213,24 @@ fun CameraDetailScreen(
                             SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(it))
                         } ?: "No frame yet"
                         Text(text = "Last frame: $frameTime")
+
+                        // Этап B: выключенная камера не участвует в автообновлении,
+                        // но ручное Refresh выше остаётся доступным.
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Auto-update",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = cam.enabled,
+                                onCheckedChange = { viewModel.setCameraEnabled(cam, it) }
+                            )
+                        }
                     }
                 }
             }
