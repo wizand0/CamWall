@@ -54,6 +54,11 @@ class CameraWallViewModel(
         private const val DEFAULT_REFRESH_INTERVAL = 30
         private const val DEFAULT_MAX_RETRIES = 3
 
+        // План v8: расписание night mode по умолчанию 22:00–07:00
+        // (минуты от полуночи).
+        const val DEFAULT_NIGHT_MODE_START = 22 * 60
+        const val DEFAULT_NIGHT_MODE_END = 7 * 60
+
         // Concurrency обхода: не более двух камер одновременно (v4 этап 5).
         private const val MAX_CONCURRENT_UPDATES = 2
         // Экспоненциальный backoff для ретраев захвата кадра.
@@ -66,8 +71,11 @@ class CameraWallViewModel(
         // Фоновое обновление (WorkManager) должно быть запланировано при каждом
         // старте приложения, а не только при заходе в Settings — иначе после
         // переустановки/очистки данных расписание пропадает и не восстанавливается.
+        // План v8: планируем только если фоновое автообновление включено.
         viewModelScope.launch {
-            scheduleBackgroundUpdates(getRefreshInterval())
+            if (isBackgroundUpdateEnabled()) {
+                scheduleBackgroundUpdates(getRefreshInterval())
+            }
         }
     }
 
@@ -359,6 +367,60 @@ class CameraWallViewModel(
         }
     }
 
+    // --- План v8: расписание night mode ---
+
+    suspend fun getNightModeStart(): Int {
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.NIGHT_MODE_START_KEY] ?: DEFAULT_NIGHT_MODE_START
+    }
+
+    fun setNightModeStart(minutes: Int) {
+        viewModelScope.launch {
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.NIGHT_MODE_START_KEY] = minutes.coerceIn(0, 1439)
+            }
+        }
+    }
+
+    suspend fun getNightModeEnd(): Int {
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.NIGHT_MODE_END_KEY] ?: DEFAULT_NIGHT_MODE_END
+    }
+
+    fun setNightModeEnd(minutes: Int) {
+        viewModelScope.launch {
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.NIGHT_MODE_END_KEY] = minutes.coerceIn(0, 1439)
+            }
+        }
+    }
+
+    // --- План v8: фоновое автообновление вкл/выкл ---
+
+    suspend fun isBackgroundUpdateEnabled(): Boolean {
+        val preferences = application.settingsDataStore.data.first()
+        return preferences[SettingsKeys.BACKGROUND_UPDATE_ENABLED_KEY] ?: true
+    }
+
+    /**
+     * План v8: полное управление фоновым автообновлением.
+     * Вкл — планируем периодическую задачу WorkManager;
+     * Выкл — отменяем её полностью (night mode при этом не нужен,
+     * его секция в настройках гасится на уровне UI).
+     */
+    fun setBackgroundUpdateEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            application.settingsDataStore.edit { preferences ->
+                preferences[SettingsKeys.BACKGROUND_UPDATE_ENABLED_KEY] = enabled
+            }
+            if (enabled) {
+                scheduleBackgroundUpdates(getRefreshInterval())
+            } else {
+                cancelCameraUpdates()
+            }
+        }
+    }
+
     // Flow for a specific camera by ID
     fun getCameraById(id: String) = cameraRepository.getCameraById(id)
 
@@ -423,8 +485,12 @@ class CameraWallViewModel(
         if (foregroundRefreshJob != null) {
             startForegroundAutoRefresh(intervalSeconds)
         }
+        // План v8: фоновую задачу перепланируем только если фоновое
+        // автообновление включено.
         viewModelScope.launch {
-            scheduleBackgroundUpdates(intervalSeconds)
+            if (isBackgroundUpdateEnabled()) {
+                scheduleBackgroundUpdates(intervalSeconds)
+            }
         }
     }
 
