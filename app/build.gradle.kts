@@ -13,8 +13,8 @@ android {
         applicationId = "ru.wizand.camwall"
         minSdk = 29
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -85,7 +85,7 @@ dependencies {
 
     // FFmpegKit: захват кадров из RTSP (media3-exoplayer-rtsp не подходит,
     // см. комментарий в RtspFrameCapture)
-    implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")
+    implementation(libs.ffmpeg.kit.x6kb)
 
     // WorkManager
     implementation(libs.androidx.work.runtime)
@@ -101,12 +101,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     
     // Image loading
-    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation(libs.coil.compose)
     
     // JSON
     implementation(libs.gson)
-    
-
     
     // Testing
     testImplementation(libs.junit)
@@ -114,7 +112,6 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     
     // Preview tools
-//    debugImplementation("libs.androidx.compose.ui.tooling:1.12.0")
-    implementation("androidx.compose.ui:ui-tooling:1.12.0")
+    implementation(libs.androidx.compose.ui.tooling)
 
 }
