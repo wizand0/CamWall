@@ -132,6 +132,27 @@ class CameraWallViewModel(
         }
     }
 
+    /**
+     * Редактирование камеры (план v7, замечание про кнопку Edit):
+     * имя сохраняется в Room, URL — в EncryptedSharedPreferences.
+     * Пустой/blank URL не перезаписывает сохранённый.
+     */
+    fun updateCamera(camera: Camera, newName: String, newRtspUrl: String?) {
+        viewModelScope.launch {
+            try {
+                val trimmedName = newName.trim()
+                if (trimmedName.isEmpty()) return@launch
+                updateCameraUseCase(camera.copy(name = trimmedName))
+                if (!newRtspUrl.isNullOrBlank()) {
+                    cameraRepository.saveRtspUrl(camera.id, newRtspUrl.trim())
+                }
+                loadCameras()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating camera", e)
+            }
+        }
+    }
+
     fun testRtspConnection(rtspUrl: String, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {

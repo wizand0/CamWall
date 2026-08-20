@@ -24,6 +24,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -70,6 +71,7 @@ fun CameraDetailScreen(
 ) {
     val camera by viewModel.getCameraById(cameraId).collectAsState(initial = null)
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -140,9 +142,7 @@ fun CameraDetailScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                     }
 
-                    IconButton(onClick = {
-                        // Navigate to edit screen (not implemented yet)
-                    }) {
+                    IconButton(onClick = { showEditDialog = true }) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit")
                     }
 
@@ -184,6 +184,19 @@ fun CameraDetailScreen(
         }
     }
 
+    // Диалог редактирования (план v7): имя — в Room, URL — в
+    // EncryptedSharedPreferences. Пустой URL сохраняет текущий.
+    if (showEditDialog) {
+        EditCameraDialog(
+            camera = camera,
+            onDismiss = { showEditDialog = false },
+            onSave = { name, url ->
+                camera?.let { viewModel.updateCamera(it, name, url) }
+                showEditDialog = false
+            }
+        )
+    }
+
     // Delete confirmation dialog
     if (showDeleteDialog) {
         AlertDialog(
@@ -212,6 +225,57 @@ fun CameraDetailScreen(
             }
         )
     }
+}
+
+/**
+ * Диалог редактирования камеры: имя (обязательно) и RTSP URL (опционально —
+ * пустое поле сохраняет текущий URL). Пароль в UI не показываем: поле URL
+ * изначально пустое, текущее значение не подставляется.
+ */
+@Composable
+private fun EditCameraDialog(
+    camera: Camera?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, rtspUrl: String?) -> Unit
+) {
+    var name by remember(camera?.id) { mutableStateOf(camera?.name.orEmpty()) }
+    var rtspUrl by remember(camera?.id) { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Camera") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = rtspUrl,
+                    onValueChange = { rtspUrl = it },
+                    label = { Text("RTSP URL (leave empty to keep current)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(name, rtspUrl) },
+                enabled = name.isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 /**
