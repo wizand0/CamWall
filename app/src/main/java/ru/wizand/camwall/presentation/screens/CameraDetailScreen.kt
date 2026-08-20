@@ -1,12 +1,17 @@
 package ru.wizand.camwall.presentation.screens
 
+import android.content.res.Configuration
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -25,7 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,7 +39,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -43,10 +49,11 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.delay
-import ru.wizand.camwall.rtsp.RtspLiveViewer
+import ru.wizand.camwall.domain.model.Camera
 import ru.wizand.camwall.util.RtspUrlMasker
 import ru.wizand.camwall.viewmodels.CameraWallViewModel
 import ru.wizand.camwall.viewmodel_factory.CameraWallViewModelFactory
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,10 +71,11 @@ fun CameraDetailScreen(
     val camera by viewModel.getCameraById(cameraId).collectAsState(initial = null)
     var showDeleteDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // Этап C: live view через долгоживущий FFmpeg-сеанс (каждый кадр потока).
-    val liveViewer = remember { RtspLiveViewer(context.applicationContext) }
-    var liveMode by remember { mutableStateOf(false) }
+    // План v7: live-сеанс живёт в ViewModel (переживает повороты Activity),
+    // экран только читает состояние и последние кадры.
+    val liveMode by viewModel.isLiveActive.collectAsState()
     // Тик опроса последнего кадра: смена ключа заставляет Coil перечитать файл.
     var liveTick by remember { mutableLongStateOf(0L) }
 
@@ -75,13 +83,7 @@ fun CameraDetailScreen(
         viewModel.loadCameraById(cameraId)
     }
 
-    // Гарантированная остановка FFmpeg-сеанса при уходе с экрана,
-    // иначе RTSP-сессия и CPU продолжат работать.
-    DisposableEffect(cameraId) {
-        onDispose { liveViewer.stop() }
-    }
-
-    // Пока live view включён — периодически опрашиваем файл с актуальным кадром.
+    // Пока live view включён — периодически опрашиваем последний кадр.
     LaunchedEffect(liveMode) {
         while (liveMode) {
             delay(LIVE_POLL_INTERVAL_MS)
@@ -96,13 +98,22 @@ fun CameraDetailScreen(
             Toast.makeText(context, "RTSP URL not found in secure storage", Toast.LENGTH_SHORT).show()
             return
         }
-        liveViewer.start(url)
-        liveMode = true
+        viewModel.startLiveView(cam.id)
     }
 
     fun stopLiveView() {
-        liveViewer.stop()
-        liveMode = false
+        viewModel.stopLiveView()
+    }
+
+    // План v7: live + альбом → трансляция на весь экран без TopAppBar,
+    // управление — плавающая кнопка поверх видео.
+    if (liveMode && isLandscape) {
+        FullscreenLiveLayout(
+            liveFrame = viewModel.latestLiveFrame(),
+            liveTick = liveTick,
+            onStop = { stopLiveView() }
+        )
+        return
     }
 
     Scaffold(
@@ -115,9 +126,6 @@ fun CameraDetailScreen(
                     }
                 },
                 actions = {
-                    // Этап C: запуск/остановка live view.
-                    // Stop-иконки нет в базовом наборе material-icons-core,
-                    // поэтому для остановки используется Close.
                     IconButton(onClick = { if (liveMode) stopLiveView() else startLiveView() }) {
                         Icon(
                             if (liveMode) Icons.Default.Close else Icons.Default.PlayArrow,
@@ -126,7 +134,6 @@ fun CameraDetailScreen(
                     }
 
                     IconButton(onClick = {
-                        android.util.Log.d("CameraDetailScreen", "Refresh clicked for ${camera?.id}")
                         // Ручное обновление кадра (доступно и для отключённых камер, этап B).
                         camera?.let { viewModel.refreshCamera(it) }
                     }) {
@@ -134,9 +141,7 @@ fun CameraDetailScreen(
                     }
 
                     IconButton(onClick = {
-                        // Navigate to edit screen
-                        // For now, we'll just navigate to add screen with edit mode
-                        // In a real implementation, you'd have an EditCameraScreen
+                        // Navigate to edit screen (not implemented yet)
                     }) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit")
                     }
@@ -154,96 +159,26 @@ fun CameraDetailScreen(
                 .padding(paddingValues)
         ) {
             camera?.let { cam ->
-                val frameFile = context.filesDir.resolve(cam.frameFilePath)
-                val frameModel: Any? = if (frameFile.exists()) frameFile else null
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                ) {
-                    // Camera preview: в live-режиме показываем последний кадр
-                    // из последовательности frame_%05d.jpg (план v6), иначе —
-                    // последний сохранённый кадр (snapshot).
-                    if (liveMode) {
-                        // План v6: каждый кадр — отдельный файл, появляется только
-                        // после полного закрытия — Coil никогда не читает недописанный
-                        // JPEG, моргание исчезает. Имя файла уникально и само по себе
-                        // служит ключом кэша.
-                        val liveFrame = liveViewer.latestFrameFile()
-                        if (liveFrame != null) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(liveFrame)
-                                    .memoryCacheKey(liveFrame.name)
-                                    .build(),
-                                contentDescription = "Live view",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Подключение…")
-                            }
-                        }
-                        Text(
-                            text = "LIVE",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                        )
-                    } else {
-                        AsyncImage(
-                            model = frameModel,
-                            contentDescription = "Camera preview",
-                            contentScale = ContentScale.FillBounds,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                        )
-                    }
-
-                    // Camera info
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Text(text = "Name: ${cam.name}")
-                        // Пароль в URL не показываем (ТЗ §43). Сам URL берём из
-                        // EncryptedSharedPreferences, а не из Room (этап 2).
-                        val storedUrl = viewModel.getRtspUrl(cam.id)
-                        Text(text = "URL: ${if (storedUrl != null) RtspUrlMasker.mask(storedUrl) else "—"}")
-                        Text(text = "Status: ${cam.status}")
-                        val frameTime = cam.lastSuccessfulFrameAt?.let {
-                            SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(it))
-                        } ?: "No frame yet"
-                        Text(text = "Last frame: $frameTime")
-
-                        // Этап B: выключенная камера не участвует в автообновлении,
-                        // но ручное Refresh выше остаётся доступным.
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Auto-update",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Switch(
-                                checked = cam.enabled,
-                                onCheckedChange = { viewModel.setCameraEnabled(cam, it) }
-                            )
-                        }
-                    }
+                if (isLandscape) {
+                    // План v7: альбом без live — кадр слева на пол-экрана,
+                    // справа колонка с информацией.
+                    LandscapeDetailLayout(
+                        camera = cam,
+                        liveMode = liveMode,
+                        liveFrame = viewModel.latestLiveFrame(),
+                        liveTick = liveTick,
+                        maskedUrl = viewModel.getRtspUrl(cam.id)?.let(RtspUrlMasker::mask),
+                        onToggleEnabled = { viewModel.setCameraEnabled(cam, it) }
+                    )
+                } else {
+                    PortraitDetailLayout(
+                        camera = cam,
+                        liveMode = liveMode,
+                        liveFrame = viewModel.latestLiveFrame(),
+                        liveTick = liveTick,
+                        maskedUrl = viewModel.getRtspUrl(cam.id)?.let(RtspUrlMasker::mask),
+                        onToggleEnabled = { viewModel.setCameraEnabled(cam, it) }
+                    )
                 }
             }
         }
@@ -276,5 +211,239 @@ fun CameraDetailScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * План v7: live-трансляция на весь экран (альбом). Кнопка остановки —
+ * плавающая поверх видео, чтобы не терять полезную площадь.
+ */
+@Composable
+private fun FullscreenLiveLayout(
+    liveFrame: File?,
+    liveTick: Long,
+    onStop: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        LivePreview(
+            liveFrame = liveFrame,
+            liveTick = liveTick,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Индикатор LIVE + кнопка остановки поверх видео.
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "LIVE",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.Red,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+            IconButton(
+                onClick = onStop,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f))
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Stop live view", tint = Color.White)
+            }
+        }
+    }
+}
+
+/**
+ * План v7: альбомная раскладка без live — кадр слева (~пол-экрана),
+ * справа информационная колонка.
+ */
+@Composable
+private fun LandscapeDetailLayout(
+    camera: Camera,
+    liveMode: Boolean,
+    liveFrame: File?,
+    liveTick: Long,
+    maskedUrl: String?,
+    onToggleEnabled: (Boolean) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            if (liveMode) {
+                LivePreview(
+                    liveFrame = liveFrame,
+                    liveTick = liveTick,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                SnapshotPreview(camera = camera, modifier = Modifier.fillMaxSize())
+            }
+        }
+
+        CameraInfoPanel(
+            camera = camera,
+            maskedUrl = maskedUrl,
+            onToggleEnabled = onToggleEnabled,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        )
+    }
+}
+
+/**
+ * Портретная раскладка (как было): кадр сверху, информация снизу.
+ */
+@Composable
+private fun PortraitDetailLayout(
+    camera: Camera,
+    liveMode: Boolean,
+    liveFrame: File?,
+    liveTick: Long,
+    maskedUrl: String?,
+    onToggleEnabled: (Boolean) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            if (liveMode) {
+                LivePreview(
+                    liveFrame = liveFrame,
+                    liveTick = liveTick,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Text(
+                    text = "LIVE",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 16.dp, bottom = 4.dp)
+                )
+            } else {
+                SnapshotPreview(camera = camera, modifier = Modifier.fillMaxSize())
+            }
+        }
+
+        CameraInfoPanel(
+            camera = camera,
+            maskedUrl = maskedUrl,
+            onToggleEnabled = onToggleEnabled,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/**
+ * Live-превью: последний полностью записанный кадр из последовательности
+ * frame_%05d.jpg (план v6). Пока кадров нет — «Подключение…».
+ */
+@Composable
+private fun LivePreview(
+    liveFrame: File?,
+    liveTick: Long,
+    modifier: Modifier = Modifier
+) {
+    if (liveFrame != null) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(liveFrame)
+                // Имя файла уникально и само по себе служит ключом кэша;
+                // тик добавлен на случай совпадения имён после очистки каталога.
+                .memoryCacheKey("${liveFrame.name}-$liveTick")
+                .build(),
+            contentDescription = "Live view",
+            contentScale = ContentScale.Fit,
+            modifier = modifier
+        )
+    } else {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text("Подключение…")
+        }
+    }
+}
+
+/**
+ * Snapshot-превью: последний сохранённый кадр камеры.
+ * План v7, проблема 3: memoryCacheKey меняется с каждым успешным захватом
+ * (lastSuccessfulFrameAt), иначе Coil отдаёт старый кадр из кэша по
+ * неизменному пути latest.jpg.
+ */
+@Composable
+private fun SnapshotPreview(camera: Camera, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val frameFile = context.filesDir.resolve(camera.frameFilePath)
+    if (frameFile.exists()) {
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(frameFile)
+                .memoryCacheKey("${camera.id}-${camera.lastSuccessfulFrameAt ?: 0}")
+                .build(),
+            contentDescription = "Camera preview",
+            contentScale = ContentScale.Fit,
+            modifier = modifier
+        )
+    } else {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text("No frame yet")
+        }
+    }
+}
+
+/**
+ * Информационная панель: имя, URL (маскированный), статус, время кадра,
+ * переключатель автообновления.
+ */
+@Composable
+private fun CameraInfoPanel(
+    camera: Camera,
+    maskedUrl: String?,
+    onToggleEnabled: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(text = "Name: ${camera.name}")
+        // Пароль в URL не показываем (ТЗ §43). Сам URL берётся из
+        // EncryptedSharedPreferences, а не из Room (этап 2).
+        Text(text = "URL: ${maskedUrl ?: "—"}")
+        Text(text = "Status: ${camera.status}")
+        val frameTime = camera.lastSuccessfulFrameAt?.let {
+            SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(it))
+        } ?: "No frame yet"
+        Text(text = "Last frame: $frameTime")
+
+        // Этап B: выключенная камера не участвует в автообновлении,
+        // но ручное Refresh остаётся доступным.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Auto-update",
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = camera.enabled,
+                onCheckedChange = onToggleEnabled
+            )
+        }
     }
 }

@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import ru.wizand.camwall.domain.model.Camera
 import ru.wizand.camwall.domain.model.CameraStatus
 import ru.wizand.camwall.viewmodels.CameraWallViewModel
@@ -206,7 +207,6 @@ fun CameraCard(
     val context = LocalContext.current
     val frameFile = context.filesDir.resolve(camera.frameFilePath)
     val frameModel: Any? = if (frameFile.exists()) frameFile else null
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -225,8 +225,19 @@ fun CameraCard(
                     .weight(1f)
                     .fillMaxWidth()
             ) {
+                // План v7, проблема 3: кадр всегда пишется в один и тот же
+                // latest.jpg, и Coil кэширует его по пути. memoryCacheKey с
+                // lastSuccessfulFrameAt меняется после каждого успешного захвата,
+                // поэтому превью обновляется по таймеру без смены экрана.
                 AsyncImage(
-                    model = frameModel,
+                    model = if (frameModel != null) {
+                        ImageRequest.Builder(context)
+                            .data(frameModel)
+                            .memoryCacheKey("${camera.id}-${camera.lastSuccessfulFrameAt ?: 0}")
+                            .build()
+                    } else {
+                        null
+                    },
                     contentDescription = "Camera preview",
                     modifier = Modifier
                         .fillMaxSize()

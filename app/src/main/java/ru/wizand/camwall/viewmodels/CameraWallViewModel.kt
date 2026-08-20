@@ -27,9 +27,11 @@ import ru.wizand.camwall.domain.usecase.DeleteCameraUseCase
 import ru.wizand.camwall.domain.usecase.GetCamerasUseCase
 import ru.wizand.camwall.domain.usecase.UpdateCameraUseCase
 import ru.wizand.camwall.rtsp.RtspFrameCapture
+import ru.wizand.camwall.rtsp.RtspLiveViewer
 import ru.wizand.camwall.manager.CameraUpdateManager
 import ru.wizand.camwall.util.SettingsKeys
 import ru.wizand.camwall.util.settingsDataStore
+import java.io.File
 
 class CameraWallViewModel(
     private val application: Application,
@@ -421,5 +423,49 @@ class CameraWallViewModel(
     fun triggerOneTimeUpdate() {
         val updateManager = CameraUpdateManager(application)
         updateManager.triggerOneTimeUpdate()
+    }
+
+    // --- Live view (план v7, проблема 1) ---
+    // FFmpeg-сеанс живёт в ViewModel, а не в композиции экрана: ViewModel
+    // привязана к NavBackStackEntry и переживает повороты Activity, поэтому
+    // трансляция не прерывается при смене ориентации. Сеанс гарантированно
+    // гасится в onCleared() — при выходе с экрана (back, delete, navigate).
+
+    private var liveViewer: RtspLiveViewer? = null
+
+    private val _isLiveActive = MutableStateFlow(false)
+    val isLiveActive: StateFlow<Boolean> = _isLiveActive
+
+    /**
+     * Запускает live-трансляцию камеры. Если сеанс уже идёт — ничего не делает.
+     */
+    fun startLiveView(cameraId: String) {
+        if (_isLiveActive.value) return
+        val url = cameraRepository.getRtspUrl(cameraId)
+        if (url.isNullOrBlank()) return
+        val viewer = liveViewer ?: RtspLiveViewer(application).also { liveViewer = it }
+        viewer.start(url)
+        _isLiveActive.value = true
+    }
+
+    /**
+     * Останавливает live-трансляцию. Идемпотентно.
+     */
+    fun stopLiveView() {
+        liveViewer?.stop()
+        _isLiveActive.value = false
+    }
+
+    /**
+     * Последний полностью записанный кадр live-трансляции (для UI).
+     */
+    fun latestLiveFrame(): File? = liveViewer?.latestFrameFile()
+
+    override fun onCleared() {
+        // Выход с экрана детали (back/удаление/переход) — гасим FFmpeg-сеанс,
+        // иначе RTSP-соединение и CPU останутся работать.
+        liveViewer?.stop()
+        liveViewer = null
+        super.onCleared()
     }
 }
