@@ -7,50 +7,63 @@ import com.arthenica.ffmpegkit.FFmpegSession
 import java.io.File
 
 /**
- * Просмотр RTSP-потока в реальном времени (каждый кадр)
- * через долгоживущий сеанс FFmpegKit (этап C).
+ * Просмотр RTSP-потока в реальном времени через долгоживущий сеанс FFmpegKit.
  *
- * Один сеанс на время просмотра: каждый декодированный кадр пишется в один
- * и тот же файл live.jpg (`-update 1`), который UI перечитывает по таймеру.
- * Прореживания нет — выводим каждый кадр потока.
+ * План v6, задача A: вместо одного перезаписываемого live.jpg (`-update 1`)
+ * FFmpeg пишет последовательность файлов frame_%05d.jpg. Каждый файл
+ * появляется в каталоге только после полного закрытия, поэтому читатель
+ * никогда не видит недописанный JPEG — моргание (Corrupt JPEG data) исчезает.
+ *
+ * Low-latency аргументы входа: -fflags nobuffer, -flags low_delay,
+ * -probesize 65536, -analyzeduration 0 — быстрый старт без буферизации.
  *
  * Почему не ExoPlayer: media3-exoplayer-rtsp требует fmtp в SDP и падает на
  * дешёвых камерах/NVR (см. RtspFrameCapture). FFmpeg работает со всеми теми же
  * камерами, что и snapshot-режим.
  *
- * Файл живёт в cacheDir (не files) и удаляется при остановке.
- * Сеанс останавливается обязательно (DisposableEffect экрана) — иначе FFmpeg
- * продолжит держать RTSP-сессию и CPU.
+ * Файлы живут в cacheDir (не files); старые кадры чистятся по мере появления
+ * новых, stop() чистит весь каталог. Сеанс останавливается обязательно
+ * (DisposableEffect экрана) — иначе FFmpeg продолжит держать RTSP-сессию и CPU.
  */
 class RtspLiveViewer(context: Context) {
 
     private val liveDir = File(context.cacheDir, "live").apply { mkdirs() }
-    val liveFrameFile: File = File(liveDir, "live.jpg")
 
     private var session: FFmpegSession? = null
+
+    // Кэш результата latestFrameFile между вызовами (опрос каждые ~100 мс,
+    // листать каталог на каждый тик дорого).
+    private var cachedLatest: File? = null
+    private var cachedFileCount = -1
 
     val isRunning: Boolean
         get() = session != null
 
     /**
      * Запускает сеанс захвата. Если сеанс уже идёт — ничего не делает.
-     * Возвращает файл, в который FFmpeg пишет актуальный кадр.
      */
-    fun start(rtspUrl: String): File {
-        if (session != null) return liveFrameFile
+    fun start(rtspUrl: String) {
+        if (session != null) return
 
-        if (liveFrameFile.exists()) liveFrameFile.delete()
+        // Сброс каталога: старые кадры от предыдущих сеансов не нужны.
+        liveDir.listFiles()?.forEach { it.delete() }
+        cachedLatest = null
+        cachedFileCount = -1
 
         val args = arrayOf(
             "-y",
             "-rtsp_transport", "tcp",
+            // Low-latency вход: быстрый старт, минимум буферизации.
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
+            "-probesize", "65536",
+            "-analyzeduration", "0",
             "-i", rtspUrl,
             "-q:v", "3",
             "-vf", "scale='min($MAX_SIDE_PX,iw)':-2",
-            // Каждый кадр потока перезаписывает один и тот же файл.
-            "-update", "1",
+            // Каждый кадр — отдельный файл; image2 закрывает файл после записи.
             "-f", "image2",
-            liveFrameFile.absolutePath
+            File(liveDir, "frame_%05d.jpg").absolutePath
         )
 
         Log.d(TAG, "start: live view session started")
@@ -59,11 +72,36 @@ class RtspLiveViewer(context: Context) {
             Log.d(TAG, "live view session finished: returnCode=${completed.returnCode}")
             session = null
         }
-        return liveFrameFile
     }
 
     /**
-     * Останавливает сеанс и удаляет временный файл.
+     * Последний полностью записанный кадр, или null, если кадров ещё нет.
+     * image2 пишет файл целиком и закрывает его перед переходом к следующему,
+     * поэтому любой существующий frame_*.jpg пригоден для чтения.
+     */
+    fun latestFrameFile(): File? {
+        val files = liveDir.listFiles { f -> f.name.startsWith("frame_") && f.name.endsWith(".jpg") }
+            ?: return null
+        if (files.isEmpty()) return null
+
+        // Кэш: если количество файлов не изменилось — возвращаем прежний ответ.
+        if (files.size == cachedFileCount && cachedLatest != null) return cachedLatest
+
+        val latest = files.maxByOrNull { it.name }
+        cachedLatest = latest
+        cachedFileCount = files.size
+
+        // Очистка старых кадров, чтобы каталог не рос бесконечно.
+        if (files.size > MAX_KEPT_FRAMES) {
+            files.sortedBy { it.name }
+                .take(files.size - MAX_KEPT_FRAMES)
+                .forEach { it.delete() }
+        }
+        return latest
+    }
+
+    /**
+     * Останавливает сеанс и чистит каталог кадров.
      * Идемпотентно: можно звать из DisposableEffect без проверок.
      */
     fun stop() {
@@ -72,11 +110,14 @@ class RtspLiveViewer(context: Context) {
             FFmpegKit.cancel(it.sessionId)
         }
         session = null
-        if (liveFrameFile.exists()) liveFrameFile.delete()
+        liveDir.listFiles()?.forEach { it.delete() }
+        cachedLatest = null
+        cachedFileCount = -1
     }
 
     companion object {
         private const val TAG = "RtspLiveViewer"
         private const val MAX_SIDE_PX = 960
+        private const val MAX_KEPT_FRAMES = 30
     }
 }

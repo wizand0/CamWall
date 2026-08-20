@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.delay
 import ru.wizand.camwall.rtsp.RtspLiveViewer
@@ -52,7 +51,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val LIVE_POLL_INTERVAL_MS = 400L
+private const val LIVE_POLL_INTERVAL_MS = 100L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,7 +68,7 @@ fun CameraDetailScreen(
     // Этап C: live view через долгоживущий FFmpeg-сеанс (каждый кадр потока).
     val liveViewer = remember { RtspLiveViewer(context.applicationContext) }
     var liveMode by remember { mutableStateOf(false) }
-    // Тик опроса файла live.jpg: смена ключа заставляет Coil перечитать файл.
+    // Тик опроса последнего кадра: смена ключа заставляет Coil перечитать файл.
     var liveTick by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(cameraId) {
@@ -162,24 +161,37 @@ fun CameraDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
-                    // Camera preview: в live-режиме показываем live.jpg,
-                    // иначе — последний сохранённый кадр (snapshot).
+                    // Camera preview: в live-режиме показываем последний кадр
+                    // из последовательности frame_%05d.jpg (план v6), иначе —
+                    // последний сохранённый кадр (snapshot).
                     if (liveMode) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(liveViewer.liveFrameFile)
-                                // Файл перезаписывается на месте: кэш отключаем и
-                                // даём уникальный ключ, чтобы Coil перечитывал файл.
-                                .memoryCachePolicy(CachePolicy.DISABLED)
-                                .diskCachePolicy(CachePolicy.DISABLED)
-                                .memoryCacheKey("live-$cameraId-$liveTick")
-                                .build(),
-                            contentDescription = "Live view",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                        )
+                        // План v6: каждый кадр — отдельный файл, появляется только
+                        // после полного закрытия — Coil никогда не читает недописанный
+                        // JPEG, моргание исчезает. Имя файла уникально и само по себе
+                        // служит ключом кэша.
+                        val liveFrame = liveViewer.latestFrameFile()
+                        if (liveFrame != null) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(liveFrame)
+                                    .memoryCacheKey(liveFrame.name)
+                                    .build(),
+                                contentDescription = "Live view",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Подключение…")
+                            }
+                        }
                         Text(
                             text = "LIVE",
                             style = MaterialTheme.typography.labelMedium,
