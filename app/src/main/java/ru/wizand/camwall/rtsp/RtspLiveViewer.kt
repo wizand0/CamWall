@@ -82,22 +82,22 @@ class RtspLiveViewer(context: Context) {
     fun latestFrameFile(): File? {
         val files = liveDir.listFiles { f -> f.name.startsWith("frame_") && f.name.endsWith(".jpg") }
             ?: return null
-        if (files.isEmpty()) return null
+        // Ждём минимум 2 файла: самый новый ещё может дописываться,
+        // но раз появился следующий — предыдущий гарантированно закрыт.
+        if (files.size < 2) return null
 
-        // Кэш: если количество файлов не изменилось — возвращаем прежний ответ.
         if (files.size == cachedFileCount && cachedLatest != null) return cachedLatest
 
-        val latest = files.maxByOrNull { it.name }
-        cachedLatest = latest
+        val sorted = files.sortedBy { it.name }
+        val safeLatest = sorted[sorted.size - 2] // не самый новый!
+
+        cachedLatest = safeLatest
         cachedFileCount = files.size
 
-        // Очистка старых кадров, чтобы каталог не рос бесконечно.
         if (files.size > MAX_KEPT_FRAMES) {
-            files.sortedBy { it.name }
-                .take(files.size - MAX_KEPT_FRAMES)
-                .forEach { it.delete() }
+            sorted.take(files.size - MAX_KEPT_FRAMES).forEach { it.delete() }
         }
-        return latest
+        return safeLatest
     }
 
     /**

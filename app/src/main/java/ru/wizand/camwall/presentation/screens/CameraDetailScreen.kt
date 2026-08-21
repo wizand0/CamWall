@@ -1,5 +1,10 @@
 package ru.wizand.camwall.presentation.screens
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -421,20 +426,29 @@ private fun LivePreview(
     liveTick: Long,
     modifier: Modifier = Modifier
 ) {
-    if (liveFrame != null) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(liveFrame)
-                // Имя файла уникально и само по себе служит ключом кэша;
-                // тик добавлен на случай совпадения имён после очистки каталога.
-                .memoryCacheKey("${liveFrame.name}-$liveTick")
-                .build(),
-            contentDescription = "Live view",
-            contentScale = ContentScale.Fit,
-            modifier = modifier
-        )
-    } else {
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    var shownBitmap by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+
+    LaunchedEffect(liveFrame?.absolutePath, liveTick) {
+        val file = liveFrame ?: return@LaunchedEffect
+        val bmp = withContext(Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+        }
+        // Обновляем только при успешном декоде — старый кадр не сбрасываем в null
+        if (bmp != null) {
+            shownBitmap = bmp.asImageBitmap()
+        }
+    }
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        val bmp = shownBitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp,
+                contentDescription = "Live view",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
             Text("Подключение…")
         }
     }

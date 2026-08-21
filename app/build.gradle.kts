@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-//    alias(libs.plugins.jetbrains.kotlin.android)
     alias(libs.plugins.ksp)
     id("org.jetbrains.kotlin.plugin.compose")
 }
@@ -13,10 +12,14 @@ android {
         applicationId = "ru.wizand.camwall"
         minSdk = 29
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -80,8 +83,8 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     
     // Media3: используется только common/UI; RTSP-захват идёт через FFmpegKit
-    implementation(libs.androidx.media3.common)
-    implementation(libs.androidx.media3.ui)
+//    implementation(libs.androidx.media3.common)
+//    implementation(libs.androidx.media3.ui)
 
     // FFmpegKit: захват кадров из RTSP (media3-exoplayer-rtsp не подходит,
     // см. комментарий в RtspFrameCapture)
